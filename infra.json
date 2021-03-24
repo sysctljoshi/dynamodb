@@ -1,0 +1,239 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Infra for Sycron",
+
+    "Parameters": {
+        "VpcId": {
+		"Type": "AWS::EC2::VPC::Id",
+		 	  "Description": "VpcId of your existing ERS Virtual Private Cloud (VPC)",
+			  "ConstraintDescription": "must be the VPC Id of an existing Virtual Private Cloud."
+	            	},
+		"Subnets": {
+			  "Type": "List<AWS::EC2::Subnet::Id>",
+			  "Description": "The list of SubnetIds ",
+		   	"Default" : ""
+		            },
+        "lambdaInstanceroleWrite": {
+			  "Description": "Role name for Lambda with Write access on DynamoDB",
+			  "Type": "String",
+			  "ConstraintDescription": "Must be a valid IAM Role"
+		            },
+        "lambdaInstanceroleRead": {
+			  "Description": "Role name for Lambda with Read Only access on DynamoDB",
+			  "Type": "String",
+			  "ConstraintDescription": "Must be a valid IAM Role"
+		          },
+        "LambdaReadSecGrp": {
+			  "Description": "Provide security group which can attach to lambda With read access to DynampDB",
+			  "Type" : "List<AWS::EC2::SecurityGroup::Id>",
+               "ConstraintDescription" : "Provide security group which can atatch to lambda With read access to DynampDB"
+		         },
+        "LambdaWriteSecGrp": {
+			  "Description": "Provide security group which can attach to lambda With Write access to DynampDB",
+			  "Type" : "List<AWS::EC2::SecurityGroup::Id>",
+               "ConstraintDescription" : "Provide security group which can attach to lambda With read access to DynampDB"
+		        },
+		"LambdaMem": {
+			  "Type": "Number",
+			  "Description": "Memory has to be allocated for the Lambda function",
+			  "Default" : ""
+					},
+		"LambdaTimeout": {
+			  "Type": "Number",
+			  "Description": "Memory has to be allocated for the Lambda function",
+			  "Default" : ""
+				  }
+    },
+
+    "Resources": {
+      "lambdaInstanceWriteProfile": {
+			    "Type": "AWS::IAM::InstanceProfile",
+			     "Properties": {
+				      "Path": "/",
+				      "Roles": [{
+					    "Ref": "lambdaInstanceroleWrite"
+				               }]
+			         }
+		    },
+      "lambdaInstanceReadProfile": {
+			    "Type": "AWS::IAM::InstanceProfile",
+			     "Properties": {
+				      "Path": "/",
+				      "Roles": [{
+					    "Ref": "lambdaInstanceroleRead"
+				               }]
+			         }
+		    },
+    "s3BucketForLambdaFunctions " : { 
+		"Type" : "AWS::S3::Bucket"
+
+	},
+	"BucketPolicy": {
+		"Type": "AWS::S3::BucketPolicy",
+		"Properties": {
+			"PolicyDocument": {
+				"Id": "MyPolicy",
+				"Version": "2012-10-17",
+				"Statement": [
+					{
+						"Sid": "ReadWriteForGetBucketObjects",
+						"Effect": "Allow",
+						"Principal": {"Ref" : "s3BucketForLambdaFunctions"},
+						"Action": "s3:GetObject",
+						"Resource": {
+							"Fn::Join": [
+								"",
+								[
+									"arn:aws:s3:::",
+									{
+										"Ref": "s3BucketForLambdaFunctions"
+									},
+									"/*"
+								]
+							]
+						}
+					}
+				]
+			},
+	"dBDynamo" : {
+				"Type" : "AWS::DynamoDB::Table",
+				"Properties" : {
+				"AttributeDefinitions" : [ {
+					"AttributeName": "dbendpoint",
+					"AttributeType": "S"
+				},
+				{
+					"AttributeName": "instancetype",
+					"AttributeType": "S"
+				} ],
+				"KeySchema" : [ {
+					"AttributeName": "dbendpoint",
+					"AttributeType": "S"
+				},
+				{
+					"AttributeName": "instancetype",
+					"AttributeType": "S"
+				} ],
+				"TableName" : "rdsdetails",
+				  }
+			  },
+	  "LambdaWriteDynamoDB"	: {
+				"Type" : "AWS::Lambda::Function",
+				"Properties" : {
+					"Code" : {	
+						"S3Bucket" : {"Ref" : "s3BucketForLambdaFunctions"},
+						"S3Key" : "lambdawrite",
+						"ZipFile" : "lambdawrite.zip"
+					  },
+					"Description" : "Lambda function for writing into Dynamo DB",
+					"FunctionName" : "WriteDBs",
+					"Handler" : "lambda_function.lambda_handler",,
+					"MemorySize" : {"Ref" : "LambdaMem"},
+					"PackageType" : "Zip",
+					"Role" : {"Ref" : "lambdaInstanceWriteProfile"},
+					"Runtime": "python2.7",
+					"Tags" : [{
+						"Key": "Name",
+						"Value": "ListDBs",
+						"PropagateAtLaunch": "true"
+					}],
+					"Timeout" : {"Ref" : "LambdaTimeout"},
+					"VpcConfig" : {
+						"SecurityGroupIds" : [ {"ref" : "LambdaReadSecGrp"} ],
+						"SubnetIds" : [ {"ref" : "Subnets"}]
+					  }
+				  
+				}
+			},
+	 "ScheduleCloudwatch" : {
+				"Type" : "AWS::Events::Rule",
+				"Properties" : {
+					"Description" : "This is for scheduling Lambda LambdaWriteDynamoDB every 5 miniutes",
+					"Name" : "dbapi",
+					"RoleArn" : { "Ref" : "lambdaInstanceWriteProfile"},
+					"ScheduleExpression" : "rate(5 minutes)",
+					"State" : "ENABLED",
+					"Targets" : [ {
+						"Arn": { "Fn::GetAtt": ["LambdaWriteDynamoDB", "Arn"] },
+						"Input": "{\"operation\":\"call-lambda\"}",
+						"Id": "cloudwatchRuleInvokeLambdaACC"
+					}]
+				  }
+			  },
+	
+
+	 "LambdaReadDynamoDB":	 {
+				"Type" : "AWS::Lambda::Function",
+				"Properties" : {
+					"Code" : {	
+						"S3Bucket" : {"Ref" : "s3BucketForLambdaFunctions"},
+						"S3Key" : "lambdaread",
+						"ZipFile" : "lambdaread.zip"
+					  },
+					"Description" : "Lambda function for Read from Dynamo DB",
+					"FunctionName" : "ListDBs",
+					"Handler" : "lambda_function.lambda_handler",
+					"MemorySize" : {"Ref" : "LambdaMem"},
+					"PackageType" : "Zip",
+					"Role" : {"Ref" : "lambdaInstanceReadProfile"},
+					"Runtime": "python2.7",
+					"Tags" : [{
+						"Key": "Name",
+						"Value": "ListDBs",
+						"PropagateAtLaunch": "true"
+					}],
+					"Timeout" : {"Ref" : "LambdaTimeout"},
+					"VpcConfig" : {
+						"SecurityGroupIds" : [ {"ref" : "LambdaReadSecGrp"} ],
+						"SubnetIds" : [ {"ref" : "Subnets"}]
+					  }
+				  
+				}
+			},
+	"DBApi": {
+				"Type": "AWS::ApiGateway::RestApi",
+				"Properties": {
+				  "Name": "DB API",
+				  "Description": "API used for Getting DB info",
+				  "FailOnWarnings" : true
+				}
+			},
+	"LambdaPermission": {
+				"Type": "AWS::Lambda::Permission",
+				"Properties": {
+					"Action": "lambda:invokeFunction",
+					"FunctionName": {"Fn::GetAtt": ["LambdaWriteDynamoDB", "Arn"]},
+				  "Principal": "apigateway.amazonaws.com",
+				  "SourceArn": { "Fn::GetAtt": ["LambdaWriteDynamoDB", "Arn"] }
+				}
+	},
+	"DBApiStage": {
+		"DependsOn" : ["ApiGatewayAccount"],
+		"Type": "AWS::ApiGateway::Stage",
+		"Properties": {
+		  "DeploymentId": {"Ref": "DBDeployment"},
+		  "MethodSettings": [{
+			"DataTraceEnabled": true,
+			"HttpMethod": "*",
+			"LoggingLevel": "INFO",
+			"ResourcePath": "/*"
+		  }],
+		  "RestApiId": {"Ref": "DBApi"},
+		  "StageName": "LATEST"
+		}
+	  },
+	  "ApiGatewayAccount": {
+		"Type" : "AWS::ApiGateway::Account",
+		"Properties" : {
+		  "CloudWatchRoleArn" : {"Fn::GetAtt" : ["ApiGatewayCloudWatchLogsRole", "Arn"] }
+		}
+	  },
+	  "DBDeployment": {
+		"Type": "AWS::ApiGateway::Deployment",
+		"DependsOn": ["GreetingRequest"],
+		"Properties": {
+		  "RestApiId": {"Ref": "DBApi"},
+		  "StageName": "DummyStage"
+		}
+	  }
+	
