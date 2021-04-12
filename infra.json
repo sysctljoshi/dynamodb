@@ -108,13 +108,13 @@
 				} ],
 				"KeySchema" : [ {
 					"AttributeName": "dbendpoint",
-					"AttributeType": "S"
+					"AttributeType": "HASH"
 				},
 				{
 					"AttributeName": "instancetype",
-					"AttributeType": "S"
+					"AttributeType": "RANGE"
 				} ],
-				"TableName" : "rdsdetails",
+				"TableName" : "rdsdetails"
 				  }
 			  },
 	  "LambdaWriteDynamoDB"	: {
@@ -127,7 +127,7 @@
 					  },
 					"Description" : "Lambda function for writing into Dynamo DB",
 					"FunctionName" : "WriteDBs",
-					"Handler" : "lambda_function.lambda_handler",,
+					"Handler" : "lambda_function.lambda_handler",
 					"MemorySize" : {"Ref" : "LambdaMem"},
 					"PackageType" : "Zip",
 					"Role" : {"Ref" : "lambdaInstanceWriteProfile"},
@@ -190,50 +190,58 @@
 				  
 				}
 			},
-	"DBApi": {
-				"Type": "AWS::ApiGateway::RestApi",
-				"Properties": {
-				  "Name": "DB API",
-				  "Description": "API used for Getting DB info",
-				  "FailOnWarnings" : true
-				}
-			},
+
 	"LambdaPermission": {
 				"Type": "AWS::Lambda::Permission",
 				"Properties": {
 					"Action": "lambda:invokeFunction",
-					"FunctionName": {"Fn::GetAtt": ["LambdaWriteDynamoDB", "Arn"]},
-				  "Principal": "apigateway.amazonaws.com",
-				  "SourceArn": { "Fn::GetAtt": ["LambdaWriteDynamoDB", "Arn"] }
+					"FunctionName": {"Fn::GetAtt": ["LambdaReadDynamoDB", "Arn"]},
+				    "Principal": "apigateway.amazonaws.com",
+				    "SourceArn": { "Fn::GetAtt": ["LambdaReadDynamoDB", "Arn"] }
+				}
 				}
 	},
-	"DBApiStage": {
+
+	  "apiGWRestAPI" : 
+	  {
+		"Type" : "AWS::ApiGateway::RestApi",
+		"Properties" : {
+			"ApiKeySourceType" : "HEADER",
+			"Name" : "lambda-api"
+		  }
+	  },
+	  "apiGWRestResource" : 
+	  {
+		"Type" : "AWS::ApiGateway::Resource",
+		"Properties" : {
+			"ParentId" : { "Fn::GetAtt": ["apiGWRestAPI", "RootResourceId"] },
+			"PathPart" : "lambda",
+			"RestApiId" : { "Fn::GetAtt": ["apiGWRestAPI"]}
+		  }
+	  },
+      "ApiDBmethod" :
+	  {
+		"Type" : "AWS::ApiGateway::Method",
+		"Properties" : {
+			"HttpMethod" : "POST",
+			"Integration" : Integration,
+			"OperationName" : "lambda",
+			"ResourceId" : {"Ref" : "apiGWRestResource"},
+			"RestApiId" : {"Ref" : "apiGWRestAPI"}
+		  }
+	  },
+	  "ApiDBDeploymentStage": {
 		"DependsOn" : ["ApiGatewayAccount"],
 		"Type": "AWS::ApiGateway::Stage",
-		"Properties": {
-		  "DeploymentId": {"Ref": "DBDeployment"},
-		  "MethodSettings": [{
-			"DataTraceEnabled": true,
-			"HttpMethod": "*",
-			"LoggingLevel": "INFO",
-			"ResourcePath": "/*"
-		  }],
-		  "RestApiId": {"Ref": "DBApi"},
+		  "RestApiId": {"Ref": "apiGWRestAPI"},
 		  "StageName": "LATEST"
 		}
 	  },
-	  "ApiGatewayAccount": {
-		"Type" : "AWS::ApiGateway::Account",
-		"Properties" : {
-		  "CloudWatchRoleArn" : {"Fn::GetAtt" : ["ApiGatewayCloudWatchLogsRole", "Arn"] }
+	  "ApiDBDeployment": {
+		"Type": "AWS::ApiGateway::Deployment",
+		"Properties": {
+		  "RestApiId": {"Ref": "apiGWRestAPI"},
+		  "StageName": "ApiDBDeploymentStage"
 		}
 	  },
-	  "DBDeployment": {
-		"Type": "AWS::ApiGateway::Deployment",
-		"DependsOn": ["GreetingRequest"],
-		"Properties": {
-		  "RestApiId": {"Ref": "DBApi"},
-		  "StageName": "DummyStage"
-		}
-	  }
 	
